@@ -1,6 +1,6 @@
 /* /user/script.js */
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js";
-import { getFirestore, collection, getDocs, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-firestore.js";
+import { getFirestore, collection, getDocs, doc, getDoc, setDoc, serverTimestamp, query, where } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-firestore.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -51,15 +51,43 @@ const whatsappBtn = document.getElementById('whatsapp-btn');
 
 let currentUserData = null;
 
+async function checkAdminSubscription(user) {
+    try {
+        const usersRef = collection(db, "users");
+        let isSubbed = false;
+        
+        if (user.email) {
+            const qEmail = query(usersRef, where("userId", "==", user.email));
+            const snapEmail = await getDocs(qEmail);
+            snapEmail.forEach(docSnap => { if(docSnap.data().status === 'active') isSubbed = true; });
+        }
+        if (user.uid && !isSubbed) {
+            const qUid = query(usersRef, where("userId", "==", user.uid));
+            const snapUid = await getDocs(qUid);
+            snapUid.forEach(docSnap => { if(docSnap.data().status === 'active') isSubbed = true; });
+        }
+        return isSubbed;
+    } catch (e) {
+        console.error(e);
+        return false;
+    }
+}
+
 onAuthStateChanged(auth, async (user) => {
     if (user) {
         const userRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userRef);
+        
+        const isAdminSubbed = await checkAdminSubscription(user);
+        
         if (userSnap.exists()) {
             currentUserData = userSnap.data();
+            currentUserData.subscribed = isAdminSubbed;
             updateSettingsUI();
             if (currentUserData.subscribed) {
                 proBadge.classList.remove('hidden');
+            } else {
+                proBadge.classList.add('hidden');
             }
         }
     }
@@ -106,20 +134,25 @@ googleLoginBtn.addEventListener('click', async (e) => {
             const userRef = doc(db, 'users', user.uid);
             const userSnap = await getDoc(userRef);
             
+            const isAdminSubbed = await checkAdminSubscription(user);
+            
             if (!userSnap.exists()) {
                 await setDoc(userRef, {
                     uid: user.uid,
                     email: user.email,
                     displayName: user.displayName,
-                    subscribed: false,
+                    subscribed: isAdminSubbed,
                     createdAt: serverTimestamp()
                 });
-                currentUserData = { uid: user.uid, email: user.email, subscribed: false, createdAt: new Date() };
+                currentUserData = { uid: user.uid, email: user.email, subscribed: isAdminSubbed, createdAt: new Date() };
             } else {
                 currentUserData = userSnap.data();
+                currentUserData.subscribed = isAdminSubbed;
             }
             if (currentUserData.subscribed) {
                 proBadge.classList.remove('hidden');
+            } else {
+                proBadge.classList.add('hidden');
             }
             finishLogin();
         }
@@ -205,8 +238,12 @@ async function loadVideos() {
             `;
             
             card.addEventListener('click', () => {
-                if (!currentUserData || !currentUserData.subscribed) {
-                    subscriptionModal.classList.remove('hidden');
+                if (data.type === 'paid') {
+                    if (!currentUserData || !currentUserData.subscribed) {
+                        subscriptionModal.classList.remove('hidden');
+                    } else {
+                        openVideo(displayVid, data.name);
+                    }
                 } else {
                     openVideo(displayVid, data.name);
                 }
@@ -321,4 +358,3 @@ window.addEventListener('blur', () => {
         playerVideo.pause();
     }
 });
-
